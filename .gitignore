@@ -1,0 +1,90 @@
+# ---- Operating system files ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Python bytecode ----
+__pycache__/
+*.py[cod]
+*$py.class
+
+# ---- Environments ----
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# ---- Packaging / build ----
+build/
+dist/
+downloads/
+eggs/
+.eggs/
+sdist/
+wheels/
+share/python-wheels/
+pip-wheel-metadata/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ---- PyInstaller ----
+*.manifest
+*.spec
+
+# ---- Installer logs ----
+pip-log.txt
+pip-delete-this-directory.txt
+
+# ---- Unit test / coverage ----
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# ---- Type checkers / linters ----
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+.pyright/
+
+# ---- Jupyter ----
+.ipynb_checkpoints/
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+
+# ---- Logs / temp ----
+logs/
+*.log
+*.tmp
+*.temp
+
+# ---- Data & media (project-specific large assets) ----
+data/
+datasets/
+bidmc-ppg-and-respiration-dataset-1.0.0/
+googledrive-archive/
+ippg-uma/
+videos_iPPG_paula/
+
+# Common video formats (avoid committing large media)
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+

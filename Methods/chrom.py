@@ -1,5 +1,5 @@
 import numpy as np
-from Tools.signalprocesser import SignalProcesser
+from Tools.signalprocesser import SignalProcessor
 #Based on the Matlab implementation proposed by Mcduff et al in https://github.com/danmcduff/iphys-toolbox
 #Changed the cutoff frequencies of the bandpass filter to 0.5 (30BPM) and 4 (240 BPM)
 def CHROM(seriesRGB, fs, plot_steps = False, normalize = True, detrend = True, bandpass = True, derivative = True):
@@ -23,8 +23,8 @@ def CHROM(seriesRGB, fs, plot_steps = False, normalize = True, detrend = True, b
     Ys = 1.5*Rn + Gn - 1.5*Bn
 
     #optimizar, llamo al bandpass varias veces lo que inicializa el filtro muchas veces.
-    Xf = SignalProcesser.bandpass(Xs, fs)
-    Yf = SignalProcesser.bandpass(Ys, fs)
+    Xf = SignalProcessor.bandpass(Xs, fs)
+    Yf = SignalProcessor.bandpass(Ys, fs)
 
     alpha = np.std(Xf)/np.std(Yf)
 
@@ -32,15 +32,15 @@ def CHROM(seriesRGB, fs, plot_steps = False, normalize = True, detrend = True, b
 
     processedSeries = np.array(S)
     if normalize:
-        processedSeries = SignalProcesser.normalize(S, fs, plot = plot_steps, color = color)
+        processedSeries = SignalProcessor.normalize(S, fs, plot = plot_steps, color = color)
 
     if detrend:
-        processedSeries = SignalProcesser.detrend(processedSeries, fs, plot = plot_steps)
+        processedSeries = SignalProcessor.detrend(processedSeries, fs, plot = plot_steps)
 
     if bandpass:
-        processedSeries = SignalProcesser.bandpass(processedSeries, fs, plot = plot_steps, color = color)
+        processedSeries = SignalProcessor.bandpass(processedSeries, fs, plot = plot_steps, color = color)
 
     if derivative:
-        processedSeries = SignalProcesser.derivativeFilter(processedSeries, fs, plot = plot_steps, color = color)
+        processedSeries = SignalProcessor.derivativeFilter(processedSeries, fs, plot = plot_steps, color = color)
 
     return S

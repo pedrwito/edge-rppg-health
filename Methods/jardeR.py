@@ -87,7 +87,7 @@ def jadeR(X, m=None, verbose=False):
     assert n < T, "number of sensors must be smaller than number of samples"
 
     # Number of sources defaults to number of sensors
-    if m==None:
+    if m is None:
         m=n
     assert m<=n,\
         "number of sources (%d) is larger than number of sensors (%d )" % (m,n)

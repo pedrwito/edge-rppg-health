@@ -9,7 +9,7 @@ import math
 import numpy as np
 from scipy import signal
 import Tools.utils as utils
-from Tools.signalprocesser import signalprocesser
+from Tools.signalprocesser import SignalProcessor
 
 
 def POS_WANG(RGB, fs, normalize = False, detrend = True, bandpass = True, derivative = False , plot_steps = False):
@@ -18,10 +18,10 @@ def POS_WANG(RGB, fs, normalize = False, detrend = True, bandpass = True, deriva
     WinSec = 1.6
     N = RGB.shape[1]
     H = np.zeros((1, N))
-    l = math.ceil(WinSec * fs)
+    window_length = math.ceil(WinSec * fs)
 
     for n in range(N):
-        m = n - l
+        m = n - window_length
         if m >= 0:
             Cn = np.true_divide(RGB[:,m:n], np.mean(RGB[:, m:n], axis=0))
             Cn = np.mat(Cn)
@@ -34,10 +34,10 @@ def POS_WANG(RGB, fs, normalize = False, detrend = True, bandpass = True, deriva
 
     BVP = H
     if normalize:
-        BVP = signalprocesser.normalize(BVP, fs = fs, plot= plot_steps, color = color )
+        BVP = SignalProcessor.normalize(BVP, fs = fs, plot= plot_steps, color = color )
     
     if detrend:
-        BVP = signalprocesser.detrend(np.mat(BVP).H, 100, fs = fs, plot= plot_steps, color = color)
+        BVP = SignalProcessor.detrend(np.mat(BVP).H, 100, fs = fs, plot= plot_steps, color = color)
     
     BVP = np.asarray(np.transpose(BVP))[0]
     
@@ -46,6 +46,6 @@ def POS_WANG(RGB, fs, normalize = False, detrend = True, bandpass = True, deriva
         BVP = signal.filtfilt(b, a, BVP.astype(np.double))
         
     if derivative:
-        BVP = signalprocesser.derivativeFilter(BVP, fs = fs, plot= plot_steps, color = color )
+        BVP = SignalProcessor.derivativeFilter(BVP, fs = fs, plot= plot_steps, color = color )
         
     return BVP

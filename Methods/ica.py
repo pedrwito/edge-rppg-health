@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from sklearn.decomposition import FastICA
 from Tools.jadeR import jadeR
 import Tools.utils as utils
-from Tools.signalprocesser import signalprocesser
+from Tools.signalprocesser import SignalProcessor
 
 def ICA(seriesRGB, fs, plot_steps = False,  method = 'jade', normalize = True, detrending = True, bandpass = True, derivate = True):
 
@@ -48,16 +48,16 @@ def ICA(seriesRGB, fs, plot_steps = False,  method = 'jade', normalize = True, d
         icaBest = icaSeries[:, MaxComp]
         
     if normalize:
-        icaBest = signalprocesser.normalize(icaBest, fs = fs, plot = plot_steps, color = color)
+        icaBest = SignalProcessor.normalize(icaBest, fs = fs, plot = plot_steps, color = color)
         
     if detrending:
-        icaBest = signalprocesser.detrend(icaBest, fs = fs, plot = plot_steps, color = color)
+        icaBest = SignalProcessor.detrend(icaBest, fs = fs, plot = plot_steps, color = color)
 
     if bandpass: 
-        icaBest = signalprocesser.bandpass(icaBest, fs = fs, plot = plot_steps,color = color)
+        icaBest = SignalProcessor.bandpass(icaBest, fs = fs, plot = plot_steps,color = color)
         
     if derivate:
-        icaBest = signalprocesser.derivativeFilter(icaBest, fs, plot = plot_steps, color = color)
+        icaBest = SignalProcessor.derivativeFilter(icaBest, fs, plot = plot_steps, color = color)
         
     return icaBest
 

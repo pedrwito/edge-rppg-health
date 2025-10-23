@@ -1,88 +1,240 @@
-from Tools.signalprocesser import signalprocesser
 import numpy as np
 from scipy import signal
 from scipy.integrate import trapezoid
 from scipy.stats import mode
+from Tools.signalprocesser  import SignalProcessor
+import Tools.utils as u
 import math
-import Tools.utils as utils
+import matplotlib.pyplot as plt
 
-class ParametersCalculator():
+class ParametersCalculator:
+    """
+    A class to calculate various physiological parameters from time series data (rPPG).
 
+    This class provides methods to calculate heart rate, respiratory rate,
+    heart rate variability, and stress indices from rPPG signals.
+    """
 
-    def getParameters(self, signal, fs, interpolation = "cubic", fs_interpolation = 4):
+    def GetParameters(self, signal: np.ndarray, fs: int, interpolation: str = "cubic", 
+                     fs_interpolation: int = 4) -> dict:
+        """
+        Calculate physiological parameters from am rPPG signal.
 
-        ibi_series, _, peaks = self.getIBISeries(signal, fs)
+        Args:
+            signal (np.ndarray): Input signal time series
+            fs (float): Sampling frequency in Hz
+            interpolation (str, optional): Interpolation method ("cubic" or "linear"). Defaults to "cubic"
+            fs_interpolation (int, optional): Interpolation sampling frequency. Defaults to 4
+            plot (bool, optional): Whether to plot intermediate results. Defaults to False
+
+        Returns:
+            dict: Dictionary containing calculated parameters:
+                - HR: Heart rate in BPM
+                - RR: Respiratory rate in breaths/minute
+                - HRV parameters (SDNN, RMSSD, etc.)
+                - Stress index
+        """
+
+        ibi_series, start, peaks = self.GetIBISeries(signal, fs)
         parameters = {}
 
-        
+        #Processing IBI series by removing too short IBI (due to incorrect detections) using absolute threshold and then relative threshhold (based on median IBI)
+        ibi_series, peaks_aux, i_del = SignalProcessor.process_serie_IBI_absolute(ibi_series, peaks = peaks, int_min = 0.3, int_max = 2)
+        ibi_series, peaks_aux, i_del  = SignalProcessor.process_serie_IBI_relative(ibi_series, peaks_aux, i_del = [], k_min = 1/2.5, k_max = 2.5)
+
+        parameters["HR"] = self.ObtainHeartRate(signal, ibi_series, fs, method = 'two_peaks_periodogram')
+
+        time_signal = np.linspace(0,len(signal)/fs, len(signal))
+
+        #filtered after finding frequency dominating signal---------------------------------------------------
+        signal_filt = SignalProcessor.bandpass(signal, fs, lowcut = parameters["HR"]/60 - 0.5 , highcut = parameters["HR"]/60 + 0.5)
+
+        ibi_series_filt, start_filt, peaks_filt = self.GetIBISeries(signal_filt, fs)
 
         #Processing IBI series by removing too short IBI (due to incorrect detections) using absolute threshold and then relative threshhold (based on median IBI)
-        ibi_series, peaks_aux, i_del = signalprocesser.process_serie_IBI_absolute(ibi_series, peaks = peaks, int_min = 0.24, int_max = 2)
-        ibi_series, peaks_aux, i_del  = signalprocesser.process_serie_IBI_relative(ibi_series, peaks_aux, i_del = [], k_min = 1/2.5, k_max = 2.5)
-        t_ibi= np.cumsum(ibi_series)
+
+        ibi_series_filt, peaks_aux_filt, i_del_filt = SignalProcessor.process_serie_IBI_absolute(ibi_series_filt, peaks = peaks_filt, int_min = 0.3, int_max = 2)
+        ibi_series_filt, peaks_aux_filt, i_del_filt  = SignalProcessor.process_serie_IBI_relative(ibi_series_filt, peaks_aux_filt, i_del = [], k_min = 1/2.5, k_max = 2.5)
+
+        def refine_peak_locations(original_signal, peak_indices, window_size=5):
+          """
+          Refines peak locations found in filtered signal by looking for true peaks in original signal.
+
+          Args:
+              original_signal (array): The original unfiltered signal
+              peak_indices (array): Indices of peaks found in filtered signal
+              window_size (int): Size of window to search around each filtered peak (default=5)
+
+          Returns:
+              array: Refined peak indices in the original signal
+          """
+          refined_peaks = []
+
+          for peak_idx in peak_indices:
+              # Define search window around the filtered peak
+              start_idx = max(0, peak_idx - window_size)
+              end_idx = min(len(original_signal), peak_idx + window_size + 1)
+
+              # Find the maximum point in the original signal within this window
+              window = original_signal[start_idx:end_idx]
+              max_idx = np.argmax(window)
+              refined_peak = start_idx + max_idx
+
+              refined_peaks.append(refined_peak)
+
+          return np.array(refined_peaks)
 
 
-        parameters["HR"] = self.obtainHeartRate(signal, ibi_series, fs, method = 'freq')
-        #TODO add ectopic beat removal using the classifier developed for the previous work
+        peaks_filt_new = refine_peak_locations(signal, peaks_filt, window_size = int(0.2*fs))
 
+        ibi_series_filt_2 = np.diff(time_signal[peaks_filt_new])
+
+        t_ibi_filtered_2 = np.cumsum(ibi_series_filt_2)
+        
         #calculation of interpolated IBI series for frequency based parameters of HRV and Respiratory Rate(RR)
         if interpolation == "linear":
-          interpolated_time, interpolated_series = signalprocesser.linear_interpolation(t_ibi, ibi_series, fs_interpolation)
+          interpolated_time_filtered_2, interpolated_series_filtered_2 = SignalProcessor.linear_interpolation(t_ibi_filtered_2, ibi_series_filt_2, fs_interpolation)
+
 
         elif interpolation == "cubic":
-          interpolated_time, interpolated_series = signalprocesser.cubic_interpolation(t_ibi, ibi_series, fs_interpolation)
+          interpolated_time_filtered_2, interpolated_series_filtered_2 = SignalProcessor.cubic_interpolation(t_ibi_filtered_2, ibi_series_filt_2, fs_interpolation)
 
-        parameters["RR"] = self.obtainRespiratoryRate(interpolated_series, fs = fs_interpolation, method = "freq")
+        parameters["RR"] = self.ObtainRespiratoryRate(interpolated_series_filtered_2, fs = fs_interpolation, method = "freq")
 
-        results_HRV, fxx, pxx = self.heartRateVariability(ibi_series, interpolated_series, fs = fs_interpolation)
+        results_HRV, fxx, pxx = self.HeartRateVariability(ibi_series, interpolated_time_filtered_2, fs = fs_interpolation)
 
         parameters.update(results_HRV)
 
-        parameters["stress"] = self.getStress(ibi_series)
-
+        parameters["stress"] = self.GetStress(ibi_series)
+        
         return parameters
 
-    def obtainHeartRate(self, signal, series, fs, method = 'frequency'):
+
+    def ObtainHeartRate(self, senal: np.ndarray, series: np.ndarray, fs: float, 
+                       method: str = 'freq', peaks: np.ndarray = None) -> float:
+        """
+        Calculate heart rate from a signal using various methods.
+
+        Args:
+            senal (np.ndarray): Input signal time series
+            series (np.ndarray): IBI series
+            fs (float): Sampling frequency in Hz
+            method (str, optional): Method to use ('freq', 'time', 'two_peaks_fft', 
+                                  'periodogram', 'two_peaks_periodogram'). Defaults to 'freq'
+            peaks (np.ndarray, optional): Pre-computed peaks. Defaults to None
+
+        Returns:
+            float: Heart rate in beats per minute (BPM)
+        """
 
         if method == 'freq':
-            freqs, fftSeriesICA = utils.FFT(signal, fs)
-            HR = utils.getPeakFrequencyFFT(freqs, fftSeriesICA) * 60
+            freqs, fftSeries = u.FFT(senal, fs)
+            fftSeries = np.abs(fftSeries)**2/len(fftSeries)
+            HR = u.getPeakFrequencyFFT(freqs, fftSeries) * 60
 
         #Get HR from peak detection in time domain.
         elif method == 'time':
-            lenght = len(signal)
-            HR = len(series)/(lenght/fs)*60
+
+            HR = 60/np.median(series)
+
+        elif method == 'two_peaks_fft':
+
+              freqs, fftSeries = u.FFT(senal, fs)
+              fftSeries = np.abs(fftSeries)**2/len(fftSeries)
+
+              # Get the corresponding frequencies
+
+              highest_freq, second_highest_freq = 10, 10
+              peaks = self.two_highest_peaks_fft(fftSeries, 30, separation = 0.1)
+
+              if len(peaks) == 2:
+
+                highest_freq, second_highest_freq = freqs[peaks]
+
+              if len(peaks) == 2 and highest_freq <1.15 and (highest_freq + 0.1 < second_highest_freq) and fftSeries[peaks[0]] * 0.60 <  fftSeries[peaks[1]]:
+
+                HR = second_highest_freq * 60
+
+              else:
+                HR = highest_freq * 60
+
+        elif method == 'periodogram':
+            fxx, pxx = u.spectogram(senal, fs)
+            HR = u.getPeakFrequencyFFT(fxx, pxx) * 60
+
+
+        elif method =='two_peaks_periodogram':
+            fxx, pxx = u.spectogram(senal, fs)
+            
+            # Mark the peaks
+            highest_freq, second_highest_freq = 10, 10
+            peaks = self.two_highest_peaks_fft(pxx, 30, separation=0.1)
+            #if len(peaks) > 0:
+                #plt.plot(fxx[peaks], pxx[peaks], 'ro', label='Peaks')
+            #plt.legend()
+            #plt.show()
+
+            if len(peaks) == 2:
+              highest_freq, second_highest_freq = fxx[peaks]
+
+            elif len(peaks)==1:
+                highest_freq = fxx[peaks[0]]
+
+            if len(peaks) == 2 and highest_freq <1.15 and (highest_freq + 0.1 < second_highest_freq) and pxx[peaks[0]] * 0.60 <  pxx[peaks[1]]:
+
+              HR = second_highest_freq * 60
+
+            else:
+                HR = highest_freq * 60
 
         return HR
 
-    def obtainRespiratoryRate(self, ibi, interpolate = None, lowcut = 0.15, highcut = 0.5, method = "freq", fs = 4):
+    def ObtainRespiratoryRate(self, ibi: np.ndarray, interpolate: str = None, 
+                             lowcut: float = 0.15, highcut: float = 0.4, 
+                             method: str = "freq", fs: float = 4) -> float:
+        """
+        Calculate respiratory rate from IBI series.
 
-      if interpolate:
-        t_ibi = np.cumsum(ibi)
-        if interpolate == "linear":
-          ibi = signalprocesser.linear_interpolation(t_ibi, ibi, fs)
-        elif interpolate == "cubic":
-          ibi = signalprocesser.cubic_interpolation(t_ibi, ibi, fs)
+        Args:
+            ibi (np.ndarray): Inter-beat interval series
+            interpolate (str, optional): Interpolation method. Defaults to None
+            lowcut (float, optional): Lower frequency cutoff in Hz. Defaults to 0.15
+            highcut (float, optional): Upper frequency cutoff in Hz. Defaults to 0.4
+            method (str, optional): Method to use ("freq" or "time"). Defaults to "freq"
+            fs (float, optional): Sampling frequency in Hz. Defaults to 4
 
-      time = np.cumsum(ibi)
-      filtered = signalprocesser.bandpass(ibi, fs, lowcut = lowcut, highcut = highcut)
-      
-      if method == "time":
-        peaks = self.getPeaks(filtered, fs = fs, k_h_max_R = 1, distance = 2.15) #distance of max 28 RR
-        RR = len(peaks)/time[-1]*60
+        Returns:
+                - RR (float): Respiratory rate in breaths/minute
+                
+        """
+        
+        time = np.cumsum(ibi)
+        if interpolate:
 
-      elif method == "freq":
-            freqs, fftSeries= utils.FFT(ibi, fs)
-            mask = (freqs > 0.15) & (freqs < 0.4)
+            if interpolate == "linear":
+                ibi = SignalProcessor.linear_interpolation(time, ibi, fs)
+            elif interpolate == "cubic":
+                ibi = SignalProcessor.cubic_interpolation(time, ibi, fs)
+
+        if method == "time":
+            time = np.cumsum(ibi)
+            filtered = SignalProcessor.bandpass(ibi, fs, lowcut = lowcut, highcut = highcut)
+            peaks = self.GetPeaks(filtered, fs = fs, k_h_max_R = 1, distance = 2.15) #distance of max 28 RR
+            RR = len(peaks)/time[-1]*60
+
+        elif method == "freq":
             
+            fxx, pxx = signal.welch(x=ibi, fs=fs,nperseg=len(ibi),scaling = 'density')
+            mask = (fxx > lowcut) & (fxx < highcut)
+            
+            fxx_acot = fxx[mask]
+            pxx_acot = pxx[mask]
+            
+            RR = u.getPeakFrequencyFFT(fxx_acot, pxx_acot) * 60
 
-            filtered_freqs = freqs[mask]
-            filtered_fftSeries = fftSeries[mask]
-            RR = utils.getPeakFrequencyFFT(filtered_freqs, filtered_fftSeries) * 60
+        return RR
 
-      return RR
-
-    def heartRateVariability(self, serie, interpolated_series, fs = 4):
+    def HeartRateVariability(self, serie, interpolated_series, fs = 4):
         mean_serie = np.mean(serie)
         results = {}
         results["Pcv"] = self.__P_cv__(serie)
@@ -107,67 +259,52 @@ class ParametersCalculator():
         results.update(results_frequency)
 
         return results, fxx, pxx
-    """
-    # Uses Baevsky's Stress Index
-    def getStress(self, series):
 
-        # Convert RR intervals to numpy array for easier calculations
-        series = np.array(series)
+    def GetStress(self, rr_intervals: np.ndarray) -> float:
+        """
+        Calculate Baevsky's Stress Index from RR intervals.
 
-        # Calculate the mode (most frequent interval)
-        Mo = mode(series)[0]
+        Args:
+            rr_intervals (np.ndarray): Array of RR intervals in seconds
 
-        # Calculate AMo (percentage of intervals close to the mode)
-        range_around_mo = 50/1000  # Define a range around Mo, for example, +/- 50 ms
-        AMo = np.sum((series > Mo - range_around_mo) & (series < Mo + range_around_mo)) / len(series) * 100
+        Returns:
+            float: Stress index value (higher values indicate more stress)
 
-        # Calculate MxDMn (difference between max and min RR intervals)
-        MxDMn = np.max(series) - np.min(series)
+        References:
+            Baevsky, R. M. (2009). Methodical recommendations use KARDiVAR 
+            system for determination of stress level and estimation of body 
+            adaptability.
+        """
+        # Convert RR intervals to a numpy array
+        rr_intervals = np.array(rr_intervals)
 
-        # Calculate Baevsky's Stress Index
-        stress_index = (AMo * 100) / (2 * Mo * MxDMn)
+        # Mode (Mo): Most frequent RR interval (considered in seconds)
+        Mo = mode(rr_intervals, keepdims=False).mode
 
-        return stress_index
+        # Tolerance for mode (±0.05 seconds)
+        tolerance = 0.05
 
-    """
+        # Mode Amplitude (AMo): Percentage of RR intervals within ±0.05 seconds of the mode
+        Mo_count = np.sum((rr_intervals >= Mo - tolerance) & (rr_intervals <= Mo + tolerance))
+        AMo = (Mo_count / len(rr_intervals)) * 100  # in percentage
 
-    def getStress(self, rr_intervals):
-      # Convert RR intervals to a numpy array
-      rr_intervals = np.array(rr_intervals)
-      
-      # Mode (Mo): Most frequent RR interval (considered in seconds)
-      Mo = mode(rr_intervals, keepdims=False).mode
+        # Variational Range (VR): Difference between max and min RR intervals (in seconds)
+        VR = np.ptp(rr_intervals)  # Peak-to-peak range
 
-      # Tolerance for mode (±0.05 seconds)
-      tolerance = 0.05
+        # Calculate Baevsky's Stress Index (SI)
+        SI = AMo / (2 * VR * Mo)
 
-      # Mode Amplitude (AMo): Percentage of RR intervals within ±0.05 seconds of the mode
-      Mo_count = np.sum((rr_intervals >= Mo - tolerance) & (rr_intervals <= Mo + tolerance))
-      AMo = (Mo_count / len(rr_intervals)) * 100  # in percentage
+        return SI
 
-      # Variational Range (VR): Difference between max and min RR intervals (in seconds)
-      VR = np.ptp(rr_intervals)  # Peak-to-peak range
-
-      # Calculate Baevsky's Stress Index (SI)
-      SI = AMo / (2 * VR * Mo)
-
-      return SI
-
-    def IBISGroundTruthPPG():
-        pass
-
-    def RRGroundTruthECG():
-        pass
-
-    def getPeaks(self, signal_, fs, k_h_max_R = 1, distance = 0.24):
+    def GetPeaks(self, signal_, fs, k_h_max_R = 1, distance = 0.3):
       h_max = k_h_max_R*np.mean(signal_)
       peaks, _  = signal.find_peaks(signal_, height = h_max, distance = round(fs*distance))
 
       return peaks
 
-    def getIBISeries(self, signal_, fs):
+    def GetIBISeries(self, signal_, fs):
 
-      peaks = self.getPeaks(signal_,fs,k_h_max_R = 1, distance = 0.3)
+      peaks = self.GetPeaks(signal_,fs,1)
       serie = []
       start = 0
       t = np.linspace(0, len(signal_)/fs, len(signal_))
@@ -182,7 +319,13 @@ class ParametersCalculator():
             serie.append(t_r - t_r_prev)
 
       return serie, start, peaks
+    
+    def two_highest_peaks_fft(self, senal, fs, separation):
+      peaks = u.GetPeaks(senal, fs, k_h_max_R = 1, separation = separation)
+      peaks = peaks[np.argsort(senal[peaks])[::-1]]  # Sort them in descending order of amplitude
+      peaks = peaks[:2]
 
+      return peaks
 
     #-----------------------------CALCULAR INDICES----------------------------------------------------------------------
     # DISPERSIÓN
@@ -298,7 +441,7 @@ class ParametersCalculator():
         total_bins_centrales = np.count_nonzero(bins_centrales)
         corrected_bins = int(total_bins - total_bins_centrales)
 
-        if correct == False:
+        if not correct:
             corrected_bins = total_bins
 
         return corrected_bins
@@ -383,3 +526,73 @@ class ParametersCalculator():
         results['Fraction LF (nu)'] = lf_nu
         results['Fraction HF (nu)'] = hf_nu
         return results, fxx, pxx
+
+    def calculate_hr_band_energy(self, signal_data: np.ndarray, fs: float, 
+                                  hr_bpm: float = None, band_width: float = 0.2) -> dict:
+        """
+        Calculate energy in the heart rate frequency band.
+        
+        This method computes the spectral power/energy within a frequency band
+        centered around the heart rate frequency. This is useful for assessing
+        signal quality and selecting the best ROI for rPPG analysis.
+        
+        Args:
+            signal_data (np.ndarray): Input signal (rPPG or other physiological signal)
+            fs (float): Sampling frequency in Hz
+            hr_bpm (float, optional): Heart rate estimate in BPM. If None, it will be
+                                     estimated from the signal using the dominant frequency
+            band_width (float, optional): Width of the frequency band around HR in Hz 
+                                         (default: 0.2 Hz, which corresponds to ±12 BPM)
+        
+        Returns:
+            dict: Dictionary containing:
+                - 'hr_band_energy': Energy/power in the HR frequency band
+                - 'total_energy': Total energy in the physiological range (0.5-4 Hz)
+                - 'hr_band_ratio': Ratio of HR band energy to total energy (0-1)
+                - 'hr_frequency_hz': HR frequency in Hz
+                - 'hr_bpm': HR in beats per minute
+                - 'band_range_hz': Tuple of (lower, upper) frequency bounds
+        
+        Example:
+            >>> calc = ParametersCalculator()
+            >>> results = calc.calculate_hr_band_energy(rppg_signal, fs=30, hr_bpm=75)
+            >>> print(f"HR band energy ratio: {results['hr_band_ratio']:.3f}")
+        """
+        # Estimate HR if not provided
+        if hr_bpm is None:
+            freqs, fft_signal = u.FFT(signal_data, fs)
+            hr_frequency = u.getPeakFrequencyFFT(freqs, fft_signal)
+            hr_bpm = hr_frequency * 60
+        else:
+            hr_frequency = hr_bpm / 60
+        
+        # Calculate power spectral density using Welch's method
+        fxx, pxx = signal.welch(x=signal_data, fs=fs, nperseg=min(len(signal_data), 256))
+        
+        # Define HR frequency band (HR ± band_width)
+        lowcut = max(0.5, hr_frequency - band_width)  # Ensure we stay in physiological range
+        highcut = min(4.0, hr_frequency + band_width)  # Max 240 BPM
+        
+        # Define condition for HR band
+        cond_hr_band = (fxx >= lowcut) & (fxx < highcut)
+        
+        # Define condition for total physiological range (0.5-4 Hz = 30-240 BPM)
+        cond_total = (fxx >= 0.5) & (fxx < 4.0)
+        
+        # Calculate energy by integrating the power spectral density
+        hr_band_energy = trapezoid(pxx[cond_hr_band], fxx[cond_hr_band])
+        total_energy = trapezoid(pxx[cond_total], fxx[cond_total])
+        
+        # Calculate ratio (how concentrated is the energy in the HR band)
+        hr_band_ratio = hr_band_energy / total_energy if total_energy > 0 else 0
+        
+        results = {
+            'hr_band_energy': hr_band_energy,
+            'total_energy': total_energy,
+            'hr_band_ratio': hr_band_ratio,
+            'hr_frequency_hz': hr_frequency,
+            'hr_bpm': hr_bpm,
+            'band_range_hz': (lowcut, highcut)
+        }
+        
+        return results

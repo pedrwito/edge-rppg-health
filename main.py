@@ -98,7 +98,7 @@ def main():
 
             ippg = IppgSignalObtainer.GetRppGSeriesfromRGBSeries(
                 red, green, blue, fs, normalize=False, derivative=False,
-                bandpass=True, detrend=True, method='pos'
+                bandpass=True, detrend=True, method='chrom'
             )
 
             if len(ippg) == 0:
@@ -142,7 +142,7 @@ def main():
                 result_row[col] = np.nan
 
     out_df = pd.DataFrame(results_rows, columns=['file', 'best_roi', 'hr', 'gt_hr'] + ordered_error_cols)
-    out_path = "results_roi_hr_periodogram.csv"
+    out_path = "results_roi_hr_periodogram_CHROM.csv"
     out_df.to_csv(out_path, index=False)
     print(f"Saved results to {out_path}")
 

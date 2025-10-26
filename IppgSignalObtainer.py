@@ -20,7 +20,7 @@ class IppgSignalObtainer:
     """
 
     @staticmethod
-    def extractSeriesRoiRGBFromVideo(video_path, fs, window_length=30, start_time=0, forehead=True, cheeks=False, under_nose=False, play_video=False):
+    def extractSeriesRoiRGBFromVideo(video_path, fs, window_length=30, start_time=0, forehead=True, cheeks=False, under_nose=False, full_face=False, play_video=False):
         """
         Extract RGB time series from selected facial regions of interest in a video.
         
@@ -40,6 +40,8 @@ class IppgSignalObtainer:
             Whether to extract RGB series from cheek regions (default: False)
         under_nose : bool, optional
             Whether to extract RGB series from under nose region (default: False)
+        full_face : bool, optional
+            Whether to extract RGB series from full facial skin area (default: False)
         play_video : bool, optional
             If True, shows the video with ROI overlays while processing (default: False)
             
@@ -54,7 +56,7 @@ class IppgSignalObtainer:
                     'blue': [list of blue channel values]
                 }
             }
-            Possible region names: 'forehead', 'left_cheek', 'right_cheek', 'under_nose'
+            Possible region names: 'forehead', 'left_cheek', 'right_cheek', 'under_nose', 'face_skin'
             
         Raises:
         -------
@@ -88,6 +90,8 @@ class IppgSignalObtainer:
             rgb_series['right_cheek'] = {'red': [], 'green': [], 'blue': []}
         if under_nose:
             rgb_series['under_nose'] = {'red': [], 'green': [], 'blue': []}
+        if full_face:
+            rgb_series['face_skin'] = {'red': [], 'green': [], 'blue': []}
 
         # Initialize Mediapipe FaceMesh
         
@@ -127,6 +131,9 @@ class IppgSignalObtainer:
                         left_cheek_landmarks = None
                         right_cheek_landmarks = None
                         under_nose_landmarks = None
+                        
+                        # Full face landmarks for exclusion regions
+                        face_mask = None
                         
                         if forehead:
                             forehead_landmarks = [
@@ -169,6 +176,58 @@ class IppgSignalObtainer:
                                 face_landmarks.landmark[171],  # Under nose
                                 face_landmarks.landmark[175],  # Under nose
                             ]
+                        
+                        if full_face:
+                            # Landmark index sets for full face processing (from extractFullFaceSkinRGBFromVideo)
+                            LEFT_EYE = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]
+                            RIGHT_EYE = [263, 249, 390, 373, 374, 380, 381, 382, 362, 398, 384, 385, 386, 387, 388, 466]
+                            LEFT_BROW = [70, 63, 105, 66, 107, 55, 65, 52, 53, 46]
+                            RIGHT_BROW = [300, 293, 334, 296, 336, 285, 295, 282, 283, 276]
+                            LIPS_OUTER = [61,146,91,181,84,17,314,405,321,375,291,308,324,318,402,317,14,87,178,88,95,185,
+                                          40,39,37,0,267,269,270,409,415,310,311,312,13,82,81,42,183,78]
+                            
+                            # Create full face mask
+                            h, w, _ = frame.shape
+                            face_mask = np.zeros((h, w), dtype=np.uint8)
+                            
+                            # Get all face landmarks for convex hull
+                            all_pts = np.array([[int(face_landmarks.landmark[i].x * w), int(face_landmarks.landmark[i].y * h)] for i in range(len(face_landmarks.landmark))], dtype=np.int32)
+                            face_hull = cv2.convexHull(all_pts)
+                            cv2.fillConvexPoly(face_mask, face_hull, 255)
+                            
+                            # Create exclusion mask for eyes, brows, lips
+                            exclude = np.zeros((h, w), dtype=np.uint8)
+                            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                            
+                            def pts_from_indices(indices):
+                                return np.array([[int(face_landmarks.landmark[i].x * w), int(face_landmarks.landmark[i].y * h)] for i in indices], dtype=np.int32)
+                            
+                            # Compute convex hulls of exclusion regions
+                            left_eye_poly = cv2.convexHull(pts_from_indices(LEFT_EYE))
+                            right_eye_poly = cv2.convexHull(pts_from_indices(RIGHT_EYE))
+                            left_brow_poly = cv2.convexHull(pts_from_indices(LEFT_BROW))
+                            right_brow_poly = cv2.convexHull(pts_from_indices(RIGHT_BROW))
+                            lips_poly = cv2.convexHull(pts_from_indices(LIPS_OUTER))
+                            
+                            for poly in [left_eye_poly, right_eye_poly, left_brow_poly, right_brow_poly, lips_poly]:
+                                cv2.fillConvexPoly(exclude, poly, 255)
+                            
+                            # Dilate exclusion regions
+                            exclude = cv2.dilate(exclude, kernel, iterations=1)
+                            
+                            # Remove excluded regions from face mask
+                            face_mask = cv2.bitwise_and(face_mask, cv2.bitwise_not(exclude))
+                            
+                            # Apply skin color filter
+                            ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
+                            lower = np.array([0, 133, 77], dtype=np.uint8)
+                            upper = np.array([255, 173, 127], dtype=np.uint8)
+                            color_mask = cv2.inRange(ycrcb, lower, upper)
+                            face_mask = cv2.bitwise_and(face_mask, color_mask)
+                            
+                            # Clean up mask
+                            face_mask = cv2.morphologyEx(face_mask, cv2.MORPH_OPEN, kernel)
+                            face_mask = cv2.morphologyEx(face_mask, cv2.MORPH_CLOSE, kernel)
                         
                         #For denormalization of pixel coordinates, we should multiply x coordinate by width and y coordinate by height.
                         
@@ -232,6 +291,18 @@ class IppgSignalObtainer:
                                 if play_video:
                                     cv2.rectangle(frame, (nose_x_min, nose_y_min), (nose_x_max, nose_y_max), (0, 255, 255), 2)
                                     cv2.putText(frame, 'under_nose', (nose_x_min, max(0, nose_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
+                        
+                        if full_face and face_mask is not None:
+                            # Full face ROI using mask
+                            rois['face_skin'] = face_mask
+                            if play_video:
+                                # Overlay the face skin mask
+                                overlay = frame.copy()
+                                overlay[face_mask > 0] = (0, 255, 0)
+                                frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
+                                # Draw mask boundary
+                                contours, _ = cv2.findContours(face_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                                cv2.drawContours(frame, contours, -1, (0, 255, 0), 1)
 
                         
                     current_frame += 1
@@ -239,15 +310,29 @@ class IppgSignalObtainer:
                     if current_frame > (start_time)*fs and current_frame < fs*(window_length + start_time):
                         # Calculate average intensity for each color channel for each ROI
                         for region_name, roi in rois.items():
-                            if roi.size > 0:  # Ensure ROI is not empty
-                                red_avg = np.mean(roi[:, :, 0])
-                                green_avg = np.mean(roi[:, :, 1])
-                                blue_avg = np.mean(roi[:, :, 2])
+                            if region_name == 'face_skin':
+                                # Full face uses mask-based extraction
+                                valid = roi > 0
+                                if np.any(valid):
+                                    red_avg = float(np.mean(rgb_frame[:, :, 0][valid]))
+                                    green_avg = float(np.mean(rgb_frame[:, :, 1][valid]))
+                                    blue_avg = float(np.mean(rgb_frame[:, :, 2][valid]))
+                                    
+                                    # Append the average intensities to the time series lists
+                                    rgb_series[region_name]['red'].append(red_avg)
+                                    rgb_series[region_name]['green'].append(green_avg)
+                                    rgb_series[region_name]['blue'].append(blue_avg)
+                            else:
+                                # Regular rectangular ROI extraction
+                                if roi.size > 0:  # Ensure ROI is not empty
+                                    red_avg = np.mean(roi[:, :, 0])
+                                    green_avg = np.mean(roi[:, :, 1])
+                                    blue_avg = np.mean(roi[:, :, 2])
 
-                                # Append the average intensities to the time series lists
-                                rgb_series[region_name]['red'].append(red_avg)
-                                rgb_series[region_name]['green'].append(green_avg)
-                                rgb_series[region_name]['blue'].append(blue_avg)
+                                    # Append the average intensities to the time series lists
+                                    rgb_series[region_name]['red'].append(red_avg)
+                                    rgb_series[region_name]['green'].append(green_avg)
+                                    rgb_series[region_name]['blue'].append(blue_avg)
 
                     # If visualization is enabled, show the frame with overlays
                     if play_video:

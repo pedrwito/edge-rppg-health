@@ -19,8 +19,11 @@ def main():
     videos_dir = "videos_iPPG_paula"
     excel_gt_path = os.path.join(videos_dir, "Metadata videos iPPG.xlsx")
     fs = 30
-    window_length = 30
+    window_length = 60
     start_time = 0
+
+    # All IPPG methods to compare
+    ippg_methods = ['pos', 'chrom', 'ica', 'green']
 
     # Read ground-truth HRs from Excel
     # The Excel has a header row, so we skip it and rename columns properly
@@ -78,6 +81,7 @@ def main():
         
         print(f"Processing {file_name} (GT HR: {gt_hr:.2f}) ...")
 
+        # Extract ROIs once per video (same for all methods)
         rois = IppgSignalObtainer.extractSeriesRoiRGBFromVideo(
             video_path, fs, window_length=window_length, start_time=start_time,
             forehead=True, cheeks=True, under_nose=False, play_video=False
@@ -87,49 +91,55 @@ def main():
             print(f"No ROI data extracted for {file_name}; skipping.")
             continue
 
-        hr_by_roi = {}
-        for roi_name, channels in rois.items():
-            red = channels.get('red', [])
-            green = channels.get('green', [])
-            blue = channels.get('blue', [])
+        # Process each IPPG method
+        for method in ippg_methods:
+            print(f"  Processing with method: {method}")
+            hr_by_roi = {}
+            
+            for roi_name, channels in rois.items():
+                red = channels.get('red', [])
+                green = channels.get('green', [])
+                blue = channels.get('blue', [])
 
-            if len(red) == 0 or len(green) == 0 or len(blue) == 0:
+                if len(red) == 0 or len(green) == 0 or len(blue) == 0:
+                    continue
+
+                ippg = IppgSignalObtainer.GetRppGSeriesfromRGBSeries(
+                    red, green, blue, fs, normalize=False, derivative=False,
+                    bandpass=True, detrend=True, method=method
+                )
+
+                if len(ippg) == 0:
+                    continue
+
+                hr = calc.ObtainHeartRate(np.array(ippg), np.array([]), fs, method='two_peaks_periodogram')
+                hr_by_roi[roi_name] = float(hr)
+
+            if len(hr_by_roi) == 0:
+                print(f"  Could not compute HR for any ROI in {file_name} with method {method}; skipping.")
                 continue
 
-            ippg = IppgSignalObtainer.GetRppGSeriesfromRGBSeries(
-                red, green, blue, fs, normalize=False, derivative=False,
-                bandpass=True, detrend=True, method='chrom'
-            )
+            # Find best ROI using the same method
+            best_roi = IppgSignalObtainer.FindBestRoiUsingHEnergyBand(rois, fs, method=method)
+            hr_best = hr_by_roi.get(best_roi, None)
+            if hr_best is None:
+                best_roi = next(iter(hr_by_roi.keys()))
+                hr_best = hr_by_roi[best_roi]
 
-            if len(ippg) == 0:
-                continue
+            result_row = {
+                'method': method,
+                'file': file_name,
+                'best_roi': best_roi,
+                'hr': hr_best,
+                'gt_hr': gt_hr,
+            }
 
-            hr = calc.ObtainHeartRate(np.array(ippg), np.array([]), fs, method='periodogram')
-            hr_by_roi[roi_name] = float(hr)
+            for roi_name in sorted(hr_by_roi.keys()):
+                roi_names_union.add(roi_name)
+                result_row[f'error_for_roi_{roi_name}'] = abs(hr_by_roi[roi_name] - gt_hr)
 
-        if len(hr_by_roi) == 0:
-            print(f"Could not compute HR for any ROI in {file_name}; skipping.")
-            continue
-
-        best_roi = IppgSignalObtainer.FindBestRoiUsingHEnergyBand(rois, fs)
-        hr_best = hr_by_roi.get(best_roi, None)
-        if hr_best is None:
-            best_roi = next(iter(hr_by_roi.keys()))
-            hr_best = hr_by_roi[best_roi]
-
-        result_row = {
-            'file': file_name,
-            'best_roi': best_roi,
-            'hr': hr_best,
-            'gt_hr': gt_hr,
-        }
-
-        for roi_name in sorted(hr_by_roi.keys()):
-            roi_names_union.add(roi_name)
-            result_row[f'error_for_roi_{roi_name}'] = abs(hr_by_roi[roi_name] - gt_hr)
-
-        results_rows.append(result_row)
-        print(f"{file_name}: best_roi={best_roi}, hr={hr_best:.2f}, gt={gt_hr:.2f}")
+            results_rows.append(result_row)
+            print(f"  {method}: best_roi={best_roi}, hr={hr_best:.2f}, gt={gt_hr:.2f}")
 
     if len(results_rows) == 0:
         print("No results to save.")
@@ -141,20 +151,25 @@ def main():
             if col not in result_row:
                 result_row[col] = np.nan
 
-    out_df = pd.DataFrame(results_rows, columns=['file', 'best_roi', 'hr', 'gt_hr'] + ordered_error_cols)
-    out_path = "results_roi_hr_periodogram_CHROM.csv"
+    out_df = pd.DataFrame(results_rows, columns=['method', 'file', 'best_roi', 'hr', 'gt_hr'] + ordered_error_cols)
+    out_path = "results_all_methods_comparison.csv"
     out_df.to_csv(out_path, index=False)
-    print(f"Saved results to {out_path}")
+    print(f"\nSaved results to {out_path}")
 
-    print("\nMSE and RMSE per ROI (across processed files):")
-    for roi_name in sorted(roi_names_union):
-        col = f'error_for_roi_{roi_name}'
-        errs = out_df[col].dropna().to_numpy()
-        if errs.size == 0:
+    print("\nMSE and RMSE per Method and ROI (across processed files):")
+    for method in ippg_methods:
+        method_df = out_df[out_df['method'] == method]
+        if len(method_df) == 0:
             continue
-        mse = float(np.mean(errs ** 2))
-        rmse = float(np.sqrt(mse))
-        print(f"{roi_name}: MSE={mse:.3f}  RMSE={rmse:.3f}")
+        print(f"\nMethod: {method}")
+        for roi_name in sorted(roi_names_union):
+            col = f'error_for_roi_{roi_name}'
+            errs = method_df[col].dropna().to_numpy()
+            if errs.size == 0:
+                continue
+            mse = float(np.mean(errs ** 2))
+            rmse = float(np.sqrt(mse))
+            print(f"  {roi_name}: MSE={mse:.3f}  RMSE={rmse:.3f}")
 
 
 if __name__ == "__main__":

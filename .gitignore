@@ -87,4 +87,38 @@ videos_iPPG_paula/
 *.mov
 *.mkv
 
+# ---- Subject data directories (frames, ground truth, etc.) ----
+Subj_*_stationary/
+*_stationary/
+*-gt/
+*-GT/
+frames/
+frame_*/
+output/
+outputs/
+results_*/frames/
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+
+# ---- Result files (keep CSV for comparison) ----
+# Allow CSV files to be tracked
+!*.csv
+*.xlsx
+*.xls
+*.zip
+*.tar
+*.tar.gz
+*.gz
+
+# ---- Output / generated files ----
+*.pickle
+*.pkl
+*.h5
+*.hdf5
+*.npz
+
 

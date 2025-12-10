@@ -20,7 +20,7 @@ class IppgSignalObtainer:
     """
 
     @staticmethod
-    def extractSeriesRoiRGBFromVideo(video_path, fs, window_length=30, start_time=0, forehead=True, cheeks=False, under_nose=False, full_face=False, play_video=False):
+    def extractSeriesRoiRGBFromVideo(video_path, fs, window_length=30, start_time=0, forehead=True, cheeks=False, under_nose=False, chin=False, full_face=False, play_video=False):
         """
         Extract RGB time series from selected facial regions of interest in a video.
         
@@ -40,6 +40,8 @@ class IppgSignalObtainer:
             Whether to extract RGB series from cheek regions (default: False)
         under_nose : bool, optional
             Whether to extract RGB series from under nose region (default: False)
+        chin : bool, optional
+            Whether to extract RGB series from chin region (default: False)
         full_face : bool, optional
             Whether to extract RGB series from full facial skin area (default: False)
         play_video : bool, optional
@@ -56,7 +58,7 @@ class IppgSignalObtainer:
                     'blue': [list of blue channel values]
                 }
             }
-            Possible region names: 'forehead', 'left_cheek', 'right_cheek', 'under_nose', 'face_skin'
+            Possible region names: 'forehead', 'left_cheek', 'right_cheek', 'under_nose', 'chin', 'face_skin'
             
         Raises:
         -------
@@ -90,6 +92,8 @@ class IppgSignalObtainer:
             rgb_series['right_cheek'] = {'red': [], 'green': [], 'blue': []}
         if under_nose:
             rgb_series['under_nose'] = {'red': [], 'green': [], 'blue': []}
+        if chin:
+            rgb_series['chin'] = {'red': [], 'green': [], 'blue': []}
         if full_face:
             rgb_series['face_skin'] = {'red': [], 'green': [], 'blue': []}
 
@@ -131,10 +135,15 @@ class IppgSignalObtainer:
                         left_cheek_landmarks = None
                         right_cheek_landmarks = None
                         under_nose_landmarks = None
+                        chin_landmarks = None
                         
                         # Full face landmarks for exclusion regions
                         face_mask = None
                         
+                        # Common landmark sets used by some ROIs regardless of full_face flag
+                        LIPS_OUTER_INDICES = [61,146,91,181,84,17,314,405,321,375,291,308,324,318,402,317,14,87,178,88,95,185,
+                                              40,39,37,0,267,269,270,409,415,310,311,312,13,82,81,42,183,78]
+						
                         if forehead:
                             forehead_landmarks = [
                                 face_landmarks.landmark[10],  #Top forehead
@@ -176,6 +185,14 @@ class IppgSignalObtainer:
                                 face_landmarks.landmark[171],  # Under nose
                                 face_landmarks.landmark[175],  # Under nose
                             ]
+                        
+                        if chin:
+                            # Define chin ROI using robust, widely available landmarks:
+                            #  - 14: lower lip center
+                            #  - 61, 291: mouth corners (left/right)
+                            #  - 152: chin bottom (mid-chin)
+                            chin_indices = [14, 61, 291, 152]
+                            chin_landmarks = [face_landmarks.landmark[i] for i in chin_indices]
                         
                         if full_face:
                             # Landmark index sets for full face processing (from extractFullFaceSkinRGBFromVideo)
@@ -291,6 +308,26 @@ class IppgSignalObtainer:
                                 if play_video:
                                     cv2.rectangle(frame, (nose_x_min, nose_y_min), (nose_x_max, nose_y_max), (0, 255, 255), 2)
                                     cv2.putText(frame, 'under_nose', (nose_x_min, max(0, nose_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
+                        
+                        if chin and chin_landmarks is not None:
+                            # Chin ROI (below the lower lip down to the chin tip)
+                            chin_x_min, chin_x_max, chin_y_min, chin_y_max = extract_roi_coordinates(chin_landmarks, top_margin=6, bottom_margin=4, left_margin=6, right_margin=6)
+                            
+                            # Compute lowest (max-y) point of lips to ensure we exclude lips from chin ROI
+                            lips_bottom_y = None
+                            if LIPS_OUTER_INDICES:
+                                lips_bottom_y = max(int(face_landmarks.landmark[i].y * h) for i in LIPS_OUTER_INDICES)
+                                # Push top of chin box below the lips by a small offset
+                                chin_y_min = max(chin_y_min, lips_bottom_y + 6)
+                                # Ensure bounds remain valid
+                                chin_y_min = min(chin_y_min, h - 1)
+                                chin_y_max = max(chin_y_max, chin_y_min + 1)
+                            
+                            if chin_y_max > chin_y_min and chin_x_max > chin_x_min:
+                                rois['chin'] = rgb_frame[chin_y_min:chin_y_max, chin_x_min:chin_x_max]
+                                if play_video:
+                                    cv2.rectangle(frame, (chin_x_min, chin_y_min), (chin_x_max, chin_y_max), (255, 0, 255), 2)
+                                    cv2.putText(frame, 'chin', (chin_x_min, max(0, chin_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,255), 1, cv2.LINE_AA)
                         
                         if full_face and face_mask is not None:
                             # Full face ROI using mask

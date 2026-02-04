@@ -7,6 +7,8 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from itertools import combinations
+from matplotlib.lines import Line2D
+import builtins
 
 from IppgSignalObtainer import IppgSignalObtainer
 from Tools.ParametersCalculator import ParametersCalculator
@@ -220,190 +222,367 @@ def plot_all_rois_signals_and_xcorr(
     normalize: bool = True,
     plot_individual: bool = False,
     subsample_peak: bool = True,
+    range: Optional[Tuple[float, float]] = None,
+    save_for_paper: bool = False,
+    save_prefix: Optional[str] = None,
+    paper_style: bool = False,
 ) -> None:
     rois = list(pos_signals.keys())
 
-    if plot_individual:
+    def _pretty_roi(name: str) -> str:
+        # left_cheek -> Left Cheek
+        return str(name).replace("_", " ").strip().title()
+
+    # Optional time-windowing (for plotting only)
+    # NOTE: `range` is a (t_start_s, t_end_s) tuple, in seconds, relative to the extracted signal start.
+    pos_plot = pos_signals
+    pos_narrow_plot = pos_signals_narrow
+    t0_s: float = 0.0
+    t1_s: Optional[float] = None
+
+    if range is not None:
+        if (not isinstance(range, (list, tuple))) or len(range) != 2:
+            raise ValueError("range must be None or a (t_start_s, t_end_s) tuple")
+        t0_s = float(range[0])
+        t1_s = float(range[1])
+        if not np.isfinite(t0_s) or not np.isfinite(t1_s) or t1_s <= t0_s:
+            raise ValueError("range must be finite and satisfy t_end_s > t_start_s")
+        if fs <= 0:
+            raise ValueError("fs must be positive")
+
+        # Find a stable max length across available ROIs so all plots align.
+        lengths = [int(np.asarray(pos_signals.get(roi, [])).size) for roi in rois]
+        max_len = min([n for n in lengths if n > 0], default=0)
+        if max_len <= 0:
+            raise ValueError("No non-empty ROI signals available for plotting.")
+
+        i0 = max(0, int(np.floor(t0_s * fs)))
+        i1 = min(max_len, int(np.ceil(t1_s * fs)))
+        if i1 - i0 < 3:
+            raise ValueError(f"range is too small for plotting after clipping: samples={i1 - i0}")
+
+        def _slice_dict(d: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+            out: Dict[str, np.ndarray] = {}
+            for k, v in d.items():
+                x = np.asarray(v)
+                if x.size == 0:
+                    out[k] = x
+                    continue
+                out[k] = x[i0:i1]
+            return out
+
+        pos_plot = _slice_dict(pos_signals)
+        pos_narrow_plot = _slice_dict(pos_signals_narrow)
+        # Keep exact clipped window for filenames / axes
+        t0_s = i0 / fs
+        t1_s = i1 / fs
+
+    # Optional SVG saving
+    save_base = save_prefix or "plot"
+    time_suffix = ""
+    if t1_s is not None and t0_s is not None and (range is not None):
+        # Make a filesystem-safe suffix
+        time_suffix = f"_t{t0_s:.2f}-{t1_s:.2f}s".replace(".", "p")
+
+    def _maybe_save(fig: "plt.Figure", tag: str) -> None:
+        if not save_for_paper:
+            return
+        out_path = f"{save_base}{time_suffix}_{tag}.svg"
+        fig.savefig(out_path, format="svg", bbox_inches="tight")
+
+    # Paper-friendly matplotlib style (local to this function)
+    rc = {}
+    if paper_style or save_for_paper:
+        rc = {
+            "font.family": "serif",
+            "font.serif": ["Times New Roman", "Times", "DejaVu Serif"],
+            "font.size": 12,
+            "axes.titlesize": 11,
+            "axes.labelsize": 12,
+            "xtick.labelsize": 10,
+            "ytick.labelsize": 10,
+            "legend.fontsize": 10,
+        }
+
+    with plt.rc_context(rc):
+
+        if plot_individual:
+            for roi in rois:
+                x = np.asarray(pos_plot.get(roi, []))
+                if x.size == 0:
+                    continue
+                t = (np.arange(x.size) / fs) + t0_s
+                peaks = _compute_peaks(x, fs)
+                if peaks is None or len(peaks) == 0:
+                    continue
+                t_peaks = (peaks / fs) + t0_s
+                fig = plt.figure(figsize=(14, 5))
+                plt.scatter(t_peaks, _z(x, normalize=normalize)[peaks], s=12, marker='o', alpha=0.8)
+                plt.plot(t, _z(x, normalize=normalize), label=_pretty_roi(roi), linewidth=0.9)
+                if not (paper_style or save_for_paper):
+                    plt.title(f'{roi} - POS (unfiltered)')
+                plt.xlabel('Time [s]')
+                plt.ylabel('Amplitude' + (' (z-score)' if normalize else ''))
+                plt.grid(True)
+                plt.legend()
+                _maybe_save(fig, f"signal_{roi}_unfiltered")
+                plt.show()
+
+        # Unfiltered, all ROIs
+        fig = plt.figure(figsize=(14, 5))
         for roi in rois:
-            x = np.asarray(pos_signals.get(roi, []))
+            x = np.asarray(pos_plot.get(roi, []))
             if x.size == 0:
                 continue
-            t = np.arange(x.size) / fs
+            t = (np.arange(x.size) / fs) + t0_s
+            plt.plot(t, _z(x, normalize=normalize), label=_pretty_roi(roi), linewidth=0.9)
+        for roi in rois:
+            x = np.asarray(pos_plot.get(roi, []))
+            if x.size == 0:
+                continue
             peaks = _compute_peaks(x, fs)
             if peaks is None or len(peaks) == 0:
                 continue
-            t_peaks = peaks / fs
-            plt.figure(figsize=(14, 5))
+            t_peaks = (peaks / fs) + t0_s
             plt.scatter(t_peaks, _z(x, normalize=normalize)[peaks], s=12, marker='o', alpha=0.8)
-            plt.plot(t, _z(x, normalize=normalize), label=roi, linewidth=0.9)
-            plt.title(f'{roi} - POS (unfiltered)')
-            plt.xlabel('Time [s]')
-            plt.ylabel('Amplitude' + (' (z-score)' if normalize else ''))
-            plt.grid(True)
-            plt.legend()
-            plt.show()
-
-    # Unfiltered, all ROIs
-    plt.figure(figsize=(14, 5))
-    for roi in rois:
-        x = np.asarray(pos_signals.get(roi, []))
-        if x.size == 0:
-            continue
-        t = np.arange(x.size) / fs
-        plt.plot(t, _z(x, normalize=normalize), label=roi, linewidth=0.9)
-    for roi in rois:
-        x = np.asarray(pos_signals.get(roi, []))
-        if x.size == 0:
-            continue
-        peaks = _compute_peaks(x, fs)
-        if peaks is None or len(peaks) == 0:
-            continue
-        t_peaks = peaks / fs
-        plt.scatter(t_peaks, _z(x, normalize=normalize)[peaks], s=12, marker='o', alpha=0.8)
-    plt.title('All ROIs - POS (unfiltered) with peak markers')
-    plt.xlabel('Time [s]')
-    plt.ylabel('Amplitude' + (' (z-score)' if normalize else ''))
-    plt.grid(True)
-    plt.legend(ncol=min(len(rois), 4))
-
-    # Filtered, all ROIs
-    if show_filtered:
-        plt.figure(figsize=(14, 5))
-        for roi in rois:
-            xf = np.asarray(pos_signals_narrow.get(roi, []))
-            if xf.size == 0:
-                continue
-            t = np.arange(xf.size) / fs
-            plt.plot(t, _z(xf, normalize=normalize), label=roi, linewidth=0.9)
-        for roi in rois:
-            xf = np.asarray(pos_signals_narrow.get(roi, []))
-            if xf.size == 0:
-                continue
-            peaks = _compute_peaks(xf, fs)
-            if peaks is None or len(peaks) == 0:
-                continue
-            t_peaks = peaks / fs
-            plt.scatter(t_peaks, _z(xf, normalize=normalize)[peaks], s=12, marker='o', alpha=0.8)
-        plt.title('All ROIs - POS (filtered HR±0.5 Hz) with peak markers')
+        if not (paper_style or save_for_paper):
+            plt.title('All ROIs - POS (unfiltered) with peak markers')
         plt.xlabel('Time [s]')
         plt.ylabel('Amplitude' + (' (z-score)' if normalize else ''))
         plt.grid(True)
         plt.legend(ncol=min(len(rois), 4))
+        _maybe_save(fig, "signals_all_unfiltered")
 
-    # Cross-correlation (unfiltered)
-    pairs = list(combinations(rois, 2))
-    if len(pairs) > 0:
-        ncols = 2 if len(pairs) > 1 else 1
-        nrows = int(np.ceil(len(pairs) / ncols))
-        fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3 * nrows), squeeze=False)
-        fig.suptitle(
-            'Cross-correlation (unfiltered) - window ±100 ms (sub-sample peak)'
-            if subsample_peak else
-            'Cross-correlation (unfiltered) - window ±100 ms (discrete peak, no interpolation)',
-            y=1.02
-        )
-        for idx, (a, b) in enumerate(pairs):
-            r = idx // ncols
-            c = idx % ncols
-            ax = axes[r][c]
-            xa = np.asarray(pos_signals.get(a, []))
-            xb = np.asarray(pos_signals.get(b, []))
-            lags, corr = _xcorr_full(xa, xb, fs)
-            if lags is None:
-                ax.set_visible(False)
-                continue
-            # Restrict to ±100 ms window (plot in milliseconds)
-            lags_ms = lags * 1000.0
-            window_mask = (lags_ms >= -100.0) & (lags_ms <= 100.0)
-            if not np.any(window_mask):
-                ax.set_visible(False)
-                continue
-            lags_w_ms = lags_ms[window_mask]
-            corr_w = corr[window_mask]
-            i = int(np.argmax(corr_w))
-            if subsample_peak:
-                i_ref, peak_val = _parabolic_refine(corr_w, i)
-                lag_step_ms = (lags_w_ms[1] - lags_w_ms[0]) if len(lags_w_ms) > 1 else (1000.0 / fs)
-                peak_lag_ms = lags_w_ms[0] + i_ref * lag_step_ms
-            else:
-                peak_val = float(corr_w[i])
-                peak_lag_ms = float(lags_w_ms[i])
-            # Plot discrete correlation samples as points (no connecting line)
-            ax.plot(lags_w_ms, corr_w, marker='o', linestyle='None', color='tab:blue', markersize=3, alpha=0.9)
-            if subsample_peak:
-                # Highlight the three samples used for parabolic interpolation in a different color
-                if 0 < i < len(corr_w) - 1:
-                    ax.plot(lags_w_ms[i-1:i+2], corr_w[i-1:i+2], marker='o', linestyle='None', color='tab:orange', markersize=4, alpha=0.95)
-                # Plot the interpolated apex value itself
-                ax.plot(peak_lag_ms, peak_val, marker='*', color='tab:purple', markersize=5, alpha=0.95)
-            ax.axvline(peak_lag_ms, color='tab:blue', linestyle='--', alpha=0.7)
-            ax.set_title(f'{a} vs {b} | peak={peak_lag_ms:.1f} ms (r={peak_val:.3f})')
-            ax.set_xlabel('Lag [ms]')
-            ax.set_ylabel('Corr')
-            ax.grid(True)
-        for j in range(len(pairs), nrows * ncols):
-            r = j // ncols
-            c = j % ncols
-            axes[r][c].set_visible(False)
-        plt.tight_layout()
+        # Filtered, all ROIs
+        if show_filtered:
+            fig = plt.figure(figsize=(14, 5))
+            for roi in rois:
+                xf = np.asarray(pos_narrow_plot.get(roi, []))
+                if xf.size == 0:
+                    continue
+                t = (np.arange(xf.size) / fs) + t0_s
+                plt.plot(t, _z(xf, normalize=normalize), label=_pretty_roi(roi), linewidth=0.9)
+            for roi in rois:
+                xf = np.asarray(pos_narrow_plot.get(roi, []))
+                if xf.size == 0:
+                    continue
+                peaks = _compute_peaks(xf, fs)
+                if peaks is None or len(peaks) == 0:
+                    continue
+                t_peaks = (peaks / fs) + t0_s
+                plt.scatter(t_peaks, _z(xf, normalize=normalize)[peaks], s=12, marker='o', alpha=0.8)
+            if not (paper_style or save_for_paper):
+                plt.title('All ROIs - POS (filtered HR±0.5 Hz) with peak markers')
+            plt.xlabel('Time [s]')
+            plt.ylabel('Amplitude' + (' (z-score)' if normalize else ''))
+            plt.grid(True)
+            plt.legend(ncol=min(len(rois), 4))
+            _maybe_save(fig, "signals_all_filtered")
 
-    # Cross-correlation (filtered)
-    if show_filtered and len(pairs) > 0:
-        ncols = 2 if len(pairs) > 1 else 1
-        nrows = int(np.ceil(len(pairs) / ncols))
-        fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3 * nrows), squeeze=False)
-        fig.suptitle(
-            'Cross-correlation (filtered HR±0.5 Hz) - window ±100 ms (sub-sample peak)'
-            if subsample_peak else
-            'Cross-correlation (filtered HR±0.5 Hz) - window ±100 ms (discrete peak, no interpolation)',
-            y=1.02
-        )
-        for idx, (a, b) in enumerate(pairs):
-            r = idx // ncols
-            c = idx % ncols
-            ax = axes[r][c]
-            xa = np.asarray(pos_signals_narrow.get(a, []))
-            xb = np.asarray(pos_signals_narrow.get(b, []))
-            lags, corr = _xcorr_full(xa, xb, fs)
-            if lags is None:
-                ax.set_visible(False)
-                continue
-            # Restrict to ±100 ms window (plot in milliseconds)
-            lags_ms = lags * 1000.0
-            window_mask = (lags_ms >= -100.0) & (lags_ms <= 100.0)
-            if not np.any(window_mask):
-                ax.set_visible(False)
-                continue
-            lags_w_ms = lags_ms[window_mask]
-            corr_w = corr[window_mask]
-            i = int(np.argmax(corr_w))
-            if subsample_peak:
-                i_ref, peak_val = _parabolic_refine(corr_w, i)
-                lag_step_ms = (lags_w_ms[1] - lags_w_ms[0]) if len(lags_w_ms) > 1 else (1000.0 / fs)
-                peak_lag_ms = lags_w_ms[0] + i_ref * lag_step_ms
-            else:
-                peak_val = float(corr_w[i])
-                peak_lag_ms = float(lags_w_ms[i])
-            # Plot discrete correlation samples as points (no connecting line)
-            ax.plot(lags_w_ms, corr_w, marker='o', linestyle='None', color='tab:green', markersize=3, alpha=0.9)
-            if subsample_peak:
-                # Highlight the three samples used for parabolic interpolation in a different color
-                if 0 < i < len(corr_w) - 1:
-                    ax.plot(lags_w_ms[i-1:i+2], corr_w[i-1:i+2], marker='o', linestyle='None', color='tab:orange', markersize=4, alpha=0.95)
-                # Plot the interpolated apex value itself
-                ax.plot(peak_lag_ms, peak_val, marker='*', color='tab:purple', markersize=5, alpha=0.95)
-            ax.axvline(peak_lag_ms, color='tab:green', linestyle='--', alpha=0.7)
-            ax.set_title(f'{a} vs {b} | peak={peak_lag_ms:.1f} ms (r={peak_val:.3f})')
-            ax.set_xlabel('Lag [ms]')
-            ax.set_ylabel('Corr')
-            ax.grid(True)
-        for j in range(len(pairs), nrows * ncols):
-            r = j // ncols
-            c = j % ncols
-            axes[r][c].set_visible(False)
-        plt.tight_layout()
+        # Cross-correlation (unfiltered)
+        pairs = list(combinations(rois, 2))
+        if len(pairs) > 0:
+            ncols = 2 if len(pairs) > 1 else 1
+            nrows = int(np.ceil(len(pairs) / ncols))
+            fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3 * nrows), squeeze=False)
+            if not (paper_style or save_for_paper):
+                fig.suptitle(
+                    'Cross-correlation (unfiltered) - window ±100 ms (sub-sample peak)'
+                    if subsample_peak else
+                    'Cross-correlation (unfiltered) - window ±100 ms (discrete peak, no interpolation)',
+                    y=1.02
+                )
+            for idx, (a, b) in enumerate(pairs):
+                rr = idx // ncols
+                cc = idx % ncols
+                ax = axes[rr][cc]
+                xa = np.asarray(pos_plot.get(a, []))
+                xb = np.asarray(pos_plot.get(b, []))
+                lags, corr = _xcorr_full(xa, xb, fs)
+                if lags is None:
+                    ax.set_visible(False)
+                    continue
+                # Restrict to ±100 ms window (plot in milliseconds)
+                lags_ms = lags * 1000.0
+                window_mask = (lags_ms >= -100.0) & (lags_ms <= 100.0)
+                if not np.any(window_mask):
+                    ax.set_visible(False)
+                    continue
+                lags_w_ms = lags_ms[window_mask]
+                corr_w = corr[window_mask]
+                i = int(np.argmax(corr_w))
+                if subsample_peak:
+                    i_ref, peak_val = _parabolic_refine(corr_w, i)
+                    lag_step_ms = (lags_w_ms[1] - lags_w_ms[0]) if len(lags_w_ms) > 1 else (1000.0 / fs)
+                    peak_lag_ms = lags_w_ms[0] + i_ref * lag_step_ms
+                else:
+                    peak_val = float(corr_w[i])
+                    peak_lag_ms = float(lags_w_ms[i])
 
-    plt.show()
+                # Plot discrete correlation samples as points (no connecting line)
+                ax.plot(lags_w_ms, corr_w, marker='o', linestyle='None', color='tab:blue', markersize=3, alpha=0.9)
+
+                if subsample_peak and 0 < i < len(corr_w) - 1:
+                    # Highlight the three samples used for parabolic interpolation in a different color
+                    x3 = lags_w_ms[i - 1 : i + 2]
+                    y3 = corr_w[i - 1 : i + 2]
+                    ax.plot(x3, y3, marker='o', linestyle='None', color='tab:orange', markersize=4, alpha=0.95)
+
+                    # Overlay the parabola fit to visually justify the sub-sample peak
+                    try:
+                        coeff = np.polyfit(x3, y3, deg=2)
+                        x_fit = np.linspace(float(x3[0]), float(x3[-1]), 80)
+                        y_fit = np.polyval(coeff, x_fit)
+                        ax.plot(x_fit, y_fit, color='tab:orange', linewidth=1.2, alpha=0.9)
+                    except Exception:
+                        pass
+
+                    # Plot the interpolated apex value itself
+                    ax.plot(peak_lag_ms, peak_val, marker='*', color='tab:purple', markersize=6, alpha=0.95)
+
+                ax.axvline(peak_lag_ms, color='tab:blue', linestyle='--', alpha=0.7)
+
+                # Cleaner, paper-style titles
+                a_name, b_name = _pretty_roi(a), _pretty_roi(b)
+                if paper_style or save_for_paper:
+                    ax.set_title(rf'{a_name} – {b_name} ($\tau_{{peak}}={peak_lag_ms:.1f}$ ms, $r={peak_val:.2f}$)')
+                else:
+                    ax.set_title(f'{a} vs {b} | peak={peak_lag_ms:.1f} ms (r={peak_val:.3f})')
+
+                # De-clutter: axis labels only on left column / bottom row (for publication)
+                if paper_style or save_for_paper:
+                    if cc != 0:
+                        ax.set_ylabel("")
+                        ax.tick_params(labelleft=False)
+                    else:
+                        ax.set_ylabel("Corr")
+                    if rr != (nrows - 1):
+                        ax.set_xlabel("")
+                        ax.tick_params(labelbottom=False)
+                    else:
+                        ax.set_xlabel("Lag [ms]")
+                else:
+                    ax.set_xlabel('Lag [ms]')
+                    ax.set_ylabel('Corr')
+
+                ax.grid(True)
+
+            for j in builtins.range(len(pairs), nrows * ncols):
+                rr = j // ncols
+                cc = j % ncols
+                axes[rr][cc].set_visible(False)
+
+            if paper_style or save_for_paper:
+                # Single legend for the whole grid (explains the blue/orange/purple markers)
+                handles = [
+                    Line2D([0], [0], marker='o', color='tab:blue', linestyle='None', markersize=4, label='XCorr samples'),
+                    Line2D([0], [0], marker='o', color='tab:orange', linestyle='None', markersize=5, label='Fit samples'),
+                    Line2D([0], [0], color='tab:orange', linewidth=1.2, label='Parabolic fit'),
+                    Line2D([0], [0], marker='*', color='tab:purple', linestyle='None', markersize=7, label=r'Sub-sample peak'),
+                ]
+                fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, bbox_to_anchor=(0.5, -0.02))
+
+            plt.tight_layout()
+            _maybe_save(fig, "xcorr_unfiltered")
+
+        # Cross-correlation (filtered)
+        if show_filtered and len(pairs) > 0:
+            ncols = 2 if len(pairs) > 1 else 1
+            nrows = int(np.ceil(len(pairs) / ncols))
+            fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3 * nrows), squeeze=False)
+            if not (paper_style or save_for_paper):
+                fig.suptitle(
+                    'Cross-correlation (filtered HR±0.5 Hz) - window ±100 ms (sub-sample peak)'
+                    if subsample_peak else
+                    'Cross-correlation (filtered HR±0.5 Hz) - window ±100 ms (discrete peak, no interpolation)',
+                    y=1.02
+                )
+            for idx, (a, b) in enumerate(pairs):
+                rr = idx // ncols
+                cc = idx % ncols
+                ax = axes[rr][cc]
+                xa = np.asarray(pos_narrow_plot.get(a, []))
+                xb = np.asarray(pos_narrow_plot.get(b, []))
+                lags, corr = _xcorr_full(xa, xb, fs)
+                if lags is None:
+                    ax.set_visible(False)
+                    continue
+                # Restrict to ±100 ms window (plot in milliseconds)
+                lags_ms = lags * 1000.0
+                window_mask = (lags_ms >= -100.0) & (lags_ms <= 100.0)
+                if not np.any(window_mask):
+                    ax.set_visible(False)
+                    continue
+                lags_w_ms = lags_ms[window_mask]
+                corr_w = corr[window_mask]
+                i = int(np.argmax(corr_w))
+                if subsample_peak:
+                    i_ref, peak_val = _parabolic_refine(corr_w, i)
+                    lag_step_ms = (lags_w_ms[1] - lags_w_ms[0]) if len(lags_w_ms) > 1 else (1000.0 / fs)
+                    peak_lag_ms = lags_w_ms[0] + i_ref * lag_step_ms
+                else:
+                    peak_val = float(corr_w[i])
+                    peak_lag_ms = float(lags_w_ms[i])
+
+                # Plot discrete correlation samples as points (no connecting line)
+                ax.plot(lags_w_ms, corr_w, marker='o', linestyle='None', color='tab:green', markersize=3, alpha=0.9)
+
+                if subsample_peak and 0 < i < len(corr_w) - 1:
+                    x3 = lags_w_ms[i - 1 : i + 2]
+                    y3 = corr_w[i - 1 : i + 2]
+                    ax.plot(x3, y3, marker='o', linestyle='None', color='tab:orange', markersize=4, alpha=0.95)
+                    try:
+                        coeff = np.polyfit(x3, y3, deg=2)
+                        x_fit = np.linspace(float(x3[0]), float(x3[-1]), 80)
+                        y_fit = np.polyval(coeff, x_fit)
+                        ax.plot(x_fit, y_fit, color='tab:orange', linewidth=1.2, alpha=0.9)
+                    except Exception:
+                        pass
+                    ax.plot(peak_lag_ms, peak_val, marker='*', color='tab:purple', markersize=6, alpha=0.95)
+
+                ax.axvline(peak_lag_ms, color='tab:green', linestyle='--', alpha=0.7)
+
+                a_name, b_name = _pretty_roi(a), _pretty_roi(b)
+                if paper_style or save_for_paper:
+                    ax.set_title(rf'{a_name} – {b_name} ($\tau_{{peak}}={peak_lag_ms:.1f}$ ms, $r={peak_val:.2f}$)')
+                else:
+                    ax.set_title(f'{a} vs {b} | peak={peak_lag_ms:.1f} ms (r={peak_val:.3f})')
+
+                if paper_style or save_for_paper:
+                    if cc != 0:
+                        ax.set_ylabel("")
+                        ax.tick_params(labelleft=False)
+                    else:
+                        ax.set_ylabel("Corr")
+                    if rr != (nrows - 1):
+                        ax.set_xlabel("")
+                        ax.tick_params(labelbottom=False)
+                    else:
+                        ax.set_xlabel("Lag [ms]")
+                else:
+                    ax.set_xlabel('Lag [ms]')
+                    ax.set_ylabel('Corr')
+
+                ax.grid(True)
+
+            for j in builtins.range(len(pairs), nrows * ncols):
+                rr = j // ncols
+                cc = j % ncols
+                axes[rr][cc].set_visible(False)
+
+            if paper_style or save_for_paper:
+                handles = [
+                    Line2D([0], [0], marker='o', color='tab:green', linestyle='None', markersize=4, label='XCorr samples'),
+                    Line2D([0], [0], marker='o', color='tab:orange', linestyle='None', markersize=5, label='Fit samples'),
+                    Line2D([0], [0], color='tab:orange', linewidth=1.2, label='Parabolic fit'),
+                    Line2D([0], [0], marker='*', color='tab:purple', linestyle='None', markersize=7, label=r'Sub-sample peak'),
+                ]
+                fig.legend(handles=handles, loc="lower center", ncol=4, frameon=False, bbox_to_anchor=(0.5, -0.02))
+
+            plt.tight_layout()
+            _maybe_save(fig, "xcorr_filtered")
+
+        plt.show()
 
 
 # ------------------------------
@@ -654,6 +833,9 @@ def plot_rois_xcorr_from_video(
     show_filtered: bool = True,
     normalize: bool = True,
     subsample_peak: bool = True,
+    range: Optional[Tuple[float, float]] = None,
+    save_for_paper: bool = False,
+    paper_style: bool = False,
 ) -> Tuple[Dict[str, np.ndarray], Dict[str, np.ndarray]]:
     # 1) Extract RGB per ROI
     rois_rgb = IppgSignalObtainer.extractSeriesRoiRGBFromVideo(
@@ -692,6 +874,10 @@ def plot_rois_xcorr_from_video(
         show_filtered=show_filtered,
         normalize=normalize,
         subsample_peak=subsample_peak,
+        range=range,
+        save_for_paper=save_for_paper,
+        save_prefix=os.path.splitext(os.path.basename(video_path))[0],
+        paper_style=(paper_style or save_for_paper),
     )
     return pos_signals, pos_signals_narrow
 
@@ -1744,6 +1930,7 @@ def summarize_ubfc_global_lag_by_frames_per_roi(
     dropna: bool = True,
     include_total_mode: bool = True,
     extra_group_cols: Optional[List[str]] = None,
+    include_abs_median_lag: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Like `summarize_ubfc_global_lag_by_frames`, but returns ROI-centric summaries.
@@ -1778,6 +1965,10 @@ def summarize_ubfc_global_lag_by_frames_per_roi(
         df = df.loc[mask].copy()
         lag = df[lag_col].astype(float)
 
+    # Keep both signed + absolute lag (ms) available for optional summaries.
+    df["_signed_lag_ms"] = lag.astype(float)
+    df["_abs_lag_ms"] = lag.astype(float).abs()
+
     lag_ms = lag.abs() if use_abs else lag
     one_frame_ms = 1000.0 / float(fs)
 
@@ -1801,16 +1992,29 @@ def summarize_ubfc_global_lag_by_frames_per_roi(
                     "pct_0step": float("nan"),
                     "pct_ge_1step": float("nan"),
                     "pct_ge_2step": float("nan"),
+                    **(
+                        {
+                            "median_abs_global_lag_ms": float("nan"),
+                            "median_abs_global_lag_steps": float("nan"),
+                        }
+                        if include_abs_median_lag
+                        else {}
+                    ),
                 }
             )
-        return pd.Series(
-            {
-                "n_rows": n,
-                "pct_0step": float(g["_is_0step"].mean() * 100.0),
-                "pct_ge_1step": float(g["_ge_1step"].mean() * 100.0),
-                "pct_ge_2step": float(g["_ge_2step"].mean() * 100.0),
-            }
-        )
+        out = {
+            "n_rows": n,
+            "pct_0step": float(g["_is_0step"].mean() * 100.0),
+            "pct_ge_1step": float(g["_ge_1step"].mean() * 100.0),
+            "pct_ge_2step": float(g["_ge_2step"].mean() * 100.0),
+        }
+
+        if include_abs_median_lag:
+            # Median of absolute global lag (ms), and its discretized (rounded) frame-step version.
+            out["median_abs_global_lag_ms"] = float(np.nanmedian(g["_abs_lag_ms"].to_numpy()))
+            out["median_abs_global_lag_steps"] = float(np.nanmedian(g["_lag_steps"].to_numpy()))
+
+        return pd.Series(out)
 
     # Overall by mode
     overall_by_mode = df.groupby(extra + ["mode"], dropna=False).apply(_summ).reset_index()

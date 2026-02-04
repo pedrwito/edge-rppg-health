@@ -1936,6 +1936,29 @@ def recreate_lag_metrics_summary_from_results_csv(
         df["_mean_signed_local_ms"] = np.nan
         df["_mean_signed_local_ms_source"] = "missing"
 
+    # Per-row MEDIAN local lag (signed and abs) if available.
+    # Many of our results CSVs already store:
+    # - median_residual_lag_ms (signed)
+    # - median_abs_residual_lag_ms (abs)
+    if local_signed_col in df.columns:
+        df["_median_signed_local_ms"] = df[local_signed_col].astype(float)
+        df["_median_signed_local_ms_source"] = local_signed_col
+    else:
+        df["_median_signed_local_ms"] = np.nan
+        df["_median_signed_local_ms_source"] = "missing"
+
+    if "median_abs_residual_lag_ms" in df.columns:
+        df["_median_abs_local_ms"] = df["median_abs_residual_lag_ms"].astype(float)
+        df["_median_abs_local_ms_source"] = "median_abs_residual_lag_ms"
+    elif local_signed_col in df.columns:
+        # Fallback: abs(median signed) is not identical to median(abs(.)),
+        # but it is a reasonable best-effort if the abs-median column is missing.
+        df["_median_abs_local_ms"] = df[local_signed_col].astype(float).abs()
+        df["_median_abs_local_ms_source"] = f"abs({local_signed_col})"
+    else:
+        df["_median_abs_local_ms"] = np.nan
+        df["_median_abs_local_ms_source"] = "missing"
+
     # Weighted sum for local mean abs across windows (best-effort)
     if has_windows:
         df["_w_abs_local_sum"] = df["_mean_abs_local_ms"] * df["_w"]
@@ -1955,6 +1978,9 @@ def recreate_lag_metrics_summary_from_results_csv(
             median_global_lag_ms=("_signed_global_lag_ms", "median"),
             mean_abs_global_lag_ms=("_abs_global_lag_ms", "mean"),
             median_abs_global_lag_ms=("_abs_global_lag_ms", "median"),
+            # Local medians (typically already computed per-row by the analysis pipeline)
+            median_residual_lag_ms=("_median_signed_local_ms", "median"),
+            median_abs_residual_lag_ms=("_median_abs_local_ms", "median"),
             # Local: window-weighted mean if we have windows, else plain mean over rows
             w_abs_local_sum=("_w_abs_local_sum", "sum") if has_windows else ("video_id", "size"),
             w_signed_local_sum=("_w_signed_local_sum", "sum") if has_windows else ("video_id", "size"),
@@ -1963,6 +1989,8 @@ def recreate_lag_metrics_summary_from_results_csv(
             mean_signed_residual_lag_ms_rowmean=("_mean_signed_local_ms", "mean"),
             any_local_mean_is_est=("_mean_abs_local_ms_is_est", "max"),
             local_signed_source=("_mean_signed_local_ms_source", "first"),
+            local_median_signed_source=("_median_signed_local_ms_source", "first"),
+            local_median_abs_source=("_median_abs_local_ms_source", "first"),
         )
         .reset_index()
     )
@@ -1974,6 +2002,9 @@ def recreate_lag_metrics_summary_from_results_csv(
     else:
         agg["mean_abs_residual_lag_ms"] = agg["mean_abs_residual_lag_ms_rowmean"]
         agg["mean_signed_residual_lag_ms"] = agg["mean_signed_residual_lag_ms_rowmean"]
+
+    # Alias to match the naming some notebooks/scripts expect.
+    agg["median_signed_residual_lag_ms"] = agg["median_residual_lag_ms"]
 
     # Clean up helper cols
     agg = agg.drop(

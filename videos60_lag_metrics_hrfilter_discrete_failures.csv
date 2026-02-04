@@ -1,0 +1,6 @@
+video_id,reason,gt_hr_bpm,hr_chin,err_chin,hr_forehead,err_forehead,hr_left_cheek,err_left_cheek,hr_right_cheek,err_right_cheek
+video_lossless_20251210_191238,Could not parse HR from filename: video_lossless_20251210_191238.mkv,,,,,,,,,
+video_lossless_20251210_192128,Could not parse HR from filename: video_lossless_20251210_192128.mkv,,,,,,,,,
+video_lossless_20251210_193429_54bpm_lucia_olivetto,Less than 2 ROIs with HR error < 10.0 bpm,54.0,98.4375,44.4375,98.4375,44.4375,112.5,58.5,112.5,58.5
+video_lossless_20251216_231611_58bpm_99ox_nicolas_barrera,Less than 2 ROIs with HR error < 10.0 bpm,58.0,112.5,54.5,56.25,1.75,112.5,54.5,112.5,54.5
+video_lossless_20251216_232421_62_97_gabruela_kober_habla,Could not parse HR from filename: video_lossless_20251216_232421_62_97_gabruela_kober_habla.mkv,,,,,,,,,

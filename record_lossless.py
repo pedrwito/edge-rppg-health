@@ -1,6 +1,7 @@
 import subprocess
 import time
 import csv
+import platform
 from datetime import datetime, UTC
 from typing import Optional
 
@@ -43,7 +44,12 @@ def record_brio_lossless_fps(
         if not timestamp_out:
             timestamp_out = f"timestamps_{ts}.csv"
 
-    # Decide input transport from camera (DirectShow)
+    # Detect platform and use appropriate input format
+    system = platform.system()
+    is_macos = system == "Darwin"
+    is_windows = system == "Windows"
+
+    # Decide input transport from camera
     # For BRIO, 60 fps requires MJPEG; 30 fps supports uncompressed YUY2.
     resolved_mode = input_mode.lower()
     if resolved_mode not in ("auto", "raw", "mjpeg"):
@@ -52,27 +58,53 @@ def record_brio_lossless_fps(
         resolved_mode = "mjpeg" if fps >= 60 else "raw"
 
     # Build ffmpeg command
-    ffmpeg_cmd = ["ffmpeg", "-y", "-f", "dshow", "-rtbufsize", "256M"]
+    ffmpeg_cmd = ["ffmpeg", "-y"]
 
-    if resolved_mode == "raw":
-        # Uncompressed transport from camera (limited to 30 fps at 1080p on BRIO)
+    if is_macos:
+        # macOS uses avfoundation
+        # On macOS, device can be specified by index (e.g., "0") or name
+        # For video-only input, use just the device identifier (no colon prefix)
+        # The colon format "video:audio" is only for when you want both
+        device_input = device_name if device_name else "0"
+        
         ffmpeg_cmd += [
-            "-pixel_format", "yuyv422",
-            "-video_size", f"{width}x{height}",
+            "-f", "avfoundation",
             "-framerate", str(fps),
-            "-i", f"video={device_name}",
+            "-video_size", f"{width}x{height}",
         ]
+        
+        if resolved_mode == "raw":
+            # Uncompressed transport from camera
+            # Note: pixel format may vary by camera; uyvy422 is common on macOS
+            ffmpeg_cmd += ["-pixel_format", "uyvy422"]
+        
+        # Add input device (video only, no audio)
+        ffmpeg_cmd += ["-i", device_input]
+    elif is_windows:
+        # Windows uses DirectShow
+        ffmpeg_cmd += ["-f", "dshow", "-rtbufsize", "256M"]
+        
+        if resolved_mode == "raw":
+            # Uncompressed transport from camera (limited to 30 fps at 1080p on BRIO)
+            ffmpeg_cmd += [
+                "-pixel_format", "yuyv422",
+                "-video_size", f"{width}x{height}",
+                "-framerate", str(fps),
+                "-i", f"video={device_name}",
+            ]
+        else:
+            # MJPEG transport from camera (allows 60 fps on BRIO)
+            ffmpeg_cmd += [
+                "-vcodec", "mjpeg",
+                "-video_size", f"{width}x{height}",
+                "-framerate", str(fps),
+                "-i", f"video={device_name}",
+            ]
     else:
-        # MJPEG transport from camera (allows 60 fps on BRIO)
-        ffmpeg_cmd += [
-            "-vcodec", "mjpeg",
-            "-video_size", f"{width}x{height}",
-            "-framerate", str(fps),
-            "-i", f"video={device_name}",
-        ]
+        raise ValueError(f"Unsupported platform: {system}. This script supports macOS and Windows.")
 
     ffmpeg_cmd += [
-        "-vsync", "0",
+        "-fps_mode", "passthrough",  # Replaced deprecated -vsync 0
         "-c:v", "ffv1",
         "-level", "3",
         "-pix_fmt", "rgb24",
@@ -118,45 +150,70 @@ def record_brio_lossless_fps(
 
 
 # -------------------------
-# Discovery/inspection helpers (Windows DirectShow)
+# Discovery/inspection helpers (Platform-aware)
 # -------------------------
-def list_dshow_devices() -> None:
+def list_video_devices() -> None:
     """
-    Print DirectShow capture devices as seen by ffmpeg on Windows.
-    ffmpeg prints this information to stderr; we forward it.
+    Print available video capture devices as seen by ffmpeg.
+    Platform-specific: uses avfoundation on macOS, dshow on Windows.
     """
-    cmd = ["ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"]
+    system = platform.system()
+    if system == "Darwin":
+        # macOS: list avfoundation devices
+        cmd = ["ffmpeg", "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""]
+    elif system == "Windows":
+        # Windows: list DirectShow devices
+        cmd = ["ffmpeg", "-hide_banner", "-f", "dshow", "-list_devices", "true", "-i", "dummy"]
+    else:
+        print(f"Platform {system} not supported for device listing.")
+        return
+    
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output = (result.stderr or b"").decode(errors="ignore")
     print(output.strip())
 
 
-def print_dshow_camera_modes(device_name: str = "Logitech Brio") -> None:
+def print_camera_modes(device_name: str = "Logitech BRIO") -> None:
     """
     Print supported capture modes (resolution, pixel format, fps) for the device.
-    Uses ffmpeg's dshow -list_options. Output depends on the driver.
+    Platform-specific: uses avfoundation on macOS, dshow on Windows.
     """
-    cmd = ["ffmpeg", "-hide_banner", "-f", "dshow", "-list_options", "true", "-i", f"video={device_name}"]
+    system = platform.system()
+    if system == "Darwin":
+        # macOS: avfoundation doesn't have a direct equivalent to -list_options
+        # We can try to probe the device
+        cmd = ["ffmpeg", "-hide_banner", "-f", "avfoundation", "-i", device_name, "-t", "0.1"]
+    elif system == "Windows":
+        # Windows: use dshow -list_options
+        cmd = ["ffmpeg", "-hide_banner", "-f", "dshow", "-list_options", "true", "-i", f"video={device_name}"]
+    else:
+        print(f"Platform {system} not supported for mode listing.")
+        return
+    
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     output = (result.stderr or b"").decode(errors="ignore")
     print(output.strip())
 
 
-def show_camera_property_dialog(device_name: str = "Logitech Brio", seconds: int = 3) -> None:
+def show_camera_property_dialog(device_name: str = "Logitech BRIO", seconds: int = 3) -> None:
     """
-    Open the Windows camera property dialog for the device via ffmpeg dshow.
-    This brings up the driver UI; it does not print values to the console.
+    Open the camera property dialog for the device (Windows only).
+    On macOS, this is not available via ffmpeg.
     """
-    cmd = [
-        "ffmpeg",
-        "-hide_banner",
-        "-f", "dshow",
-        "-show_video_device_dialog", "true",
-        "-i", f"video={device_name}",
-        "-t", str(seconds),
-        "-f", "null", "-",
-    ]
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    system = platform.system()
+    if system == "Windows":
+        cmd = [
+            "ffmpeg",
+            "-hide_banner",
+            "-f", "dshow",
+            "-show_video_device_dialog", "true",
+            "-i", f"video={device_name}",
+            "-t", str(seconds),
+            "-f", "null", "-",
+        ]
+        subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    else:
+        print("Camera property dialog is only available on Windows.")
 
 
 try:
@@ -205,10 +262,10 @@ def print_camera_basic_settings_opencv(device_index: int = 0) -> None:
 if __name__ == "__main__":
 
     # Device/mode discovery:
-    list_dshow_devices()
-    print_dshow_camera_modes(device_name="Logitech BRIO")
+    list_video_devices()
+    print_camera_modes(device_name="Logitech BRIO")
 
-    # Open driver settings UI (does not print values):
+    # Open driver settings UI (Windows only, does not print values):
     show_camera_property_dialog(device_name="Logitech BRIO", seconds=3)
 
     # Best-effort basic settings via OpenCV (if installed):
@@ -218,8 +275,8 @@ if __name__ == "__main__":
     #record_brio_lossless_fps(fps=30)   # → 1080p30 lossless
     
     #record_brio_lossless_fps(fps=30, input_mode="raw", video_out ="pedro_video_30fps_lossless.mkv") 
-    record_brio_lossless_fps(fps=30, input_mode="mjpeg", video_out ="pedro_video_30fps_mjpeg.mkv")
-    #record_brio_lossless_fps(fps=60) # → 720p60 lossless
+    #record_brio_lossless_fps(fps=30, input_mode="mjpeg", video_out ="pedro_video_30fps_mjpeg.mkv")
+    record_brio_lossless_fps(fps=60) # → 720p60 lossless
 
 
 

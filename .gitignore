@@ -80,6 +80,10 @@ bidmc-ppg-and-respiration-dataset-1.0.0/
 googledrive-archive/
 ippg-uma/
 videos_iPPG_paula/
+Videos_camara_paula/
+VIDEOS 60 FPS/
+videos random/
+UBFC_DATASET_MERGED/
 
 # Common video formats (avoid committing large media)
 *.mp4

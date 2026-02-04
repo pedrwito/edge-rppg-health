@@ -20,7 +20,19 @@ class IppgSignalObtainer:
     """
 
     @staticmethod
-    def extractSeriesRoiRGBFromVideo(video_path, fs, window_length=30, start_time=0, forehead=True, cheeks=False, under_nose=False, chin=False, full_face=False, play_video=False):
+    def extractSeriesRoiRGBFromVideo(
+        video_path,
+        fs,
+        window_length=30,
+        start_time=0,
+        forehead=True,
+        cheeks=False,
+        under_nose=False,
+        chin=False,
+        full_face=False,
+        play_video=False,
+        show_labels=False,
+    ):
         """
         Extract RGB time series from selected facial regions of interest in a video.
         
@@ -46,6 +58,8 @@ class IppgSignalObtainer:
             Whether to extract RGB series from full facial skin area (default: False)
         play_video : bool, optional
             If True, shows the video with ROI overlays while processing (default: False)
+        show_labels : bool, optional
+            If True and play_video is enabled, draws ROI text labels on the visualization (default: False)
             
         Returns:
         --------
@@ -281,7 +295,8 @@ class IppgSignalObtainer:
                                 rois['forehead'] = rgb_frame[y_min:y_max, x_min:x_max]
                                 if play_video:
                                     cv2.rectangle(frame, (x_min, y_min), (x_max, y_max), (0, 255, 0), 2)
-                                    cv2.putText(frame, 'forehead', (x_min, max(0, y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
+                                    if show_labels:
+                                        cv2.putText(frame, 'forehead', (x_min, max(0, y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,0), 1, cv2.LINE_AA)
                         
                         if cheeks and left_cheek_landmarks is not None and right_cheek_landmarks is not None:
                             # Left cheek ROI
@@ -290,7 +305,8 @@ class IppgSignalObtainer:
                                 rois['left_cheek'] = rgb_frame[left_y_min:left_y_max, left_x_min:left_x_max]
                                 if play_video:
                                     cv2.rectangle(frame, (left_x_min, left_y_min), (left_x_max, left_y_max), (255, 0, 0), 2)
-                                    cv2.putText(frame, 'left_cheek', (left_x_min, max(0, left_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
+                                    if show_labels:
+                                        cv2.putText(frame, 'left_cheek', (left_x_min, max(0, left_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,0), 1, cv2.LINE_AA)
                             
                             # Right cheek ROI
                             right_x_min, right_x_max, right_y_min, right_y_max = extract_roi_coordinates(right_cheek_landmarks, top_margin=4, bottom_margin=4, left_margin=4, right_margin=4)
@@ -298,7 +314,8 @@ class IppgSignalObtainer:
                                 rois['right_cheek'] = rgb_frame[right_y_min:right_y_max, right_x_min:right_x_max]
                                 if play_video:
                                     cv2.rectangle(frame, (right_x_min, right_y_min), (right_x_max, right_y_max), (0, 0, 255), 2)
-                                    cv2.putText(frame, 'right_cheek', (right_x_min, max(0, right_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
+                                    if show_labels:
+                                        cv2.putText(frame, 'right_cheek', (right_x_min, max(0, right_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,0,255), 1, cv2.LINE_AA)
                         
                         if under_nose and under_nose_landmarks is not None:
                             # Under nose ROI
@@ -307,7 +324,8 @@ class IppgSignalObtainer:
                                 rois['under_nose'] = rgb_frame[nose_y_min:nose_y_max, nose_x_min:nose_x_max]
                                 if play_video:
                                     cv2.rectangle(frame, (nose_x_min, nose_y_min), (nose_x_max, nose_y_max), (0, 255, 255), 2)
-                                    cv2.putText(frame, 'under_nose', (nose_x_min, max(0, nose_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
+                                    if show_labels:
+                                        cv2.putText(frame, 'under_nose', (nose_x_min, max(0, nose_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0,255,255), 1, cv2.LINE_AA)
                         
                         if chin and chin_landmarks is not None:
                             # Chin ROI (below the lower lip down to the chin tip)
@@ -327,7 +345,8 @@ class IppgSignalObtainer:
                                 rois['chin'] = rgb_frame[chin_y_min:chin_y_max, chin_x_min:chin_x_max]
                                 if play_video:
                                     cv2.rectangle(frame, (chin_x_min, chin_y_min), (chin_x_max, chin_y_max), (255, 0, 255), 2)
-                                    cv2.putText(frame, 'chin', (chin_x_min, max(0, chin_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,255), 1, cv2.LINE_AA)
+                                    if show_labels:
+                                        cv2.putText(frame, 'chin', (chin_x_min, max(0, chin_y_min-5)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,0,255), 1, cv2.LINE_AA)
                         
                         if full_face and face_mask is not None:
                             # Full face ROI using mask

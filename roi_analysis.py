@@ -306,6 +306,16 @@ def plot_all_rois_signals_and_xcorr(
 
     with plt.rc_context(rc):
 
+        # Default figure sizes. In paper mode we make them less wide / more compact.
+        if paper_style or save_for_paper:
+            signals_figsize = (9.0, 3.6)
+            xcorr_figwidth = 9.0
+            xcorr_row_height = 2.6
+        else:
+            signals_figsize = (14.0, 5.0)
+            xcorr_figwidth = 12.0
+            xcorr_row_height = 3.0
+
         if plot_individual:
             for roi in rois:
                 x = np.asarray(pos_plot.get(roi, []))
@@ -316,7 +326,7 @@ def plot_all_rois_signals_and_xcorr(
                 if peaks is None or len(peaks) == 0:
                     continue
                 t_peaks = (peaks / fs) + t0_s
-                fig = plt.figure(figsize=(14, 5))
+                fig = plt.figure(figsize=signals_figsize)
                 plt.scatter(t_peaks, _z(x, normalize=normalize)[peaks], s=12, marker='o', alpha=0.8)
                 plt.plot(t, _z(x, normalize=normalize), label=_pretty_roi(roi), linewidth=0.9)
                 if not (paper_style or save_for_paper):
@@ -329,7 +339,7 @@ def plot_all_rois_signals_and_xcorr(
                 plt.show()
 
         # Unfiltered, all ROIs
-        fig = plt.figure(figsize=(14, 5))
+        fig = plt.figure(figsize=signals_figsize)
         for roi in rois:
             x = np.asarray(pos_plot.get(roi, []))
             if x.size == 0:
@@ -355,7 +365,7 @@ def plot_all_rois_signals_and_xcorr(
 
         # Filtered, all ROIs
         if show_filtered:
-            fig = plt.figure(figsize=(14, 5))
+            fig = plt.figure(figsize=signals_figsize)
             for roi in rois:
                 xf = np.asarray(pos_narrow_plot.get(roi, []))
                 if xf.size == 0:
@@ -384,7 +394,7 @@ def plot_all_rois_signals_and_xcorr(
         if len(pairs) > 0:
             ncols = 2 if len(pairs) > 1 else 1
             nrows = int(np.ceil(len(pairs) / ncols))
-            fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3 * nrows), squeeze=False)
+            fig, axes = plt.subplots(nrows, ncols, figsize=(xcorr_figwidth, xcorr_row_height * nrows), squeeze=False)
             if not (paper_style or save_for_paper):
                 fig.suptitle(
                     'Cross-correlation (unfiltered) - window ±100 ms (sub-sample peak)'
@@ -489,7 +499,7 @@ def plot_all_rois_signals_and_xcorr(
         if show_filtered and len(pairs) > 0:
             ncols = 2 if len(pairs) > 1 else 1
             nrows = int(np.ceil(len(pairs) / ncols))
-            fig, axes = plt.subplots(nrows, ncols, figsize=(12, 3 * nrows), squeeze=False)
+            fig, axes = plt.subplots(nrows, ncols, figsize=(xcorr_figwidth, xcorr_row_height * nrows), squeeze=False)
             if not (paper_style or save_for_paper):
                 fig.suptitle(
                     'Cross-correlation (filtered HR±0.5 Hz) - window ±100 ms (sub-sample peak)'

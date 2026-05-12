@@ -1,0 +1,22 @@
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+data/
+.env
+logs/
+
+# Inference outputs (regenerated per run)
+Inference_MCD_PhysFormer/
+Inference_MCD_PhysFormer_stream/
+Inference_UBFC_PhysFormer/
+
+# Plots / scratch
+plots/
+*.npy
+*.npz
+
+# macOS
+.DS_Store
+.claude/
